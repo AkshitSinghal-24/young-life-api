@@ -8,6 +8,7 @@ from ultralytics import YOLO
 from pathlib import Path
 import cv2
 import sys
+import numpy as np
 
 
 class CrowdCounter:
@@ -34,8 +35,85 @@ class CrowdCounter:
         
         print("🚀 Loading head detection model...")
         self.model = YOLO(model_path)
-        print("✅ Ready!\n")
-    
+        print("✅ YOLO Ready!")
+
+        # Initialize Gender Model (ONNX)
+        self.gender_model = "weights/genderage.onnx"
+        self.gender_labels = ['Female', 'Male'] # 0=Female, 1=Male for this model
+
+        if Path(self.gender_model).exists():
+            print("🚀 Loading gender detection model (ONNX)...")
+            try:
+                self.gender_net = cv2.dnn.readNetFromONNX(self.gender_model)
+                print("✅ Gender Model Ready!\n")
+            except Exception as e:
+                print(f"❌ Failed to load ONNX model: {e}")
+                self.gender_net = None
+        else:
+            print("⚠️ Gender model weights not found. Gender detection will be skipped.\n")
+            self.gender_net = None
+            
+    def _get_square_crop(self, image, box):
+        """
+        Crop a square region defined by the box, preserving aspect ratio by padding if necessary.
+        """
+        h_img, w_img = image.shape[:2]
+        x1, y1, x2, y2 = box
+        w = x2 - x1
+        h = y2 - y1
+        
+        # Center of the box
+        cx = x1 + w // 2
+        cy = y1 + h // 2
+        
+        # Max dimension for square
+        max_dim = max(w, h)
+        
+        # Calculate new square coordinates
+        # Add a little padding factor (e.g. 10%) to ensure whole face is covered
+        pad = int(max_dim * 0.1)
+        size = max_dim + pad
+        
+        x1_s = cx - size // 2
+        y1_s = cy - size // 2
+        x2_s = x1_s + size
+        y2_s = y1_s + size
+        
+        # Handle boundaries with padding
+        # Simple approach: crop valid area and pad the rest with black (or mean)
+        # But cv2.resize handles distortion. 
+        # Better: clamp to image, then pad the result to be square.
+        
+        x1_c = max(0, x1_s)
+        y1_c = max(0, y1_s)
+        x2_c = min(w_img, x2_s)
+        y2_c = min(h_img, y2_s)
+        
+        crop = image[y1_c:y2_c, x1_c:x2_c]
+        
+        if crop.size == 0:
+            return None
+            
+        # Pad to restore square shape if clipped or non-square
+        h_c, w_c = crop.shape[:2]
+        
+        # Target size is (size, size) usually, but we just want to make it square
+        # before resizing to 112x112
+        
+        # Determine strict square target
+        target_size = max(h_c, w_c)
+        
+        # Create canvas
+        square_img = np.zeros((target_size, target_size, 3), dtype=np.uint8)
+        
+        # Center the crop
+        start_x = (target_size - w_c) // 2
+        start_y = (target_size - h_c) // 2
+        
+        square_img[start_y:start_y+h_c, start_x:start_x+w_c] = crop
+        
+        return square_img
+
     def count(self, image_path, save_result=False, output_dir="results", imgsz=3008):
         """
         Count people in an image with optimized settings for small heads
@@ -47,13 +125,16 @@ class CrowdCounter:
             imgsz: Inference image size (higher = better for small heads, slower)
             
         Returns:
-            int: Number of people detected
+            dict: { 'total': int, 'boys': int, 'girls': int }
         """
         if not Path(image_path).exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
         
         # Load image
         image = cv2.imread(str(image_path))
+        if image is None:
+             raise ValueError(f"Could not read image: {image_path}")
+
         h, w = image.shape[:2]
         
         print(f"📷 Counting people in: {Path(image_path).name}")
@@ -63,74 +144,91 @@ class CrowdCounter:
         # Detect heads with larger inference size for small objects
         results = self.model(image, conf=self.confidence, imgsz=imgsz, verbose=False)
         
-        # Count detections
-        count = len(results[0].boxes)
+        boxes = results[0].boxes
+        total_count = len(boxes)
+        boys_count = 0
+        girls_count = 0
         
-        print(f"   ✅ Found: {count} people\n")
+        print(f"   ✅ Found: {total_count} people")
+
+        # Prepare for annotation
+        annotated = image.copy()
         
-        # Save annotated image if requested
-        if save_result:
-            output_path = Path(output_dir)
-            output_path.mkdir(parents=True, exist_ok=True)
+        # Process each detection
+        for idx, box in enumerate(boxes, 1):
+            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
             
-            # Create custom visualization with smaller text
-            annotated = image.copy()
-            
-            # Draw each detection with sequential numbers
-            for idx, box in enumerate(results[0].boxes, 1):
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                conf = box.conf[0].cpu().numpy()
+            # Default gender label
+            gender_label = ""
+            gender_color = (0, 255, 0) # Green default
+
+            if self.gender_net:
+                # Use square crop for better recognition
+                face_img = self._get_square_crop(image, (x1, y1, x2, y2))
                 
-                # Draw thin green box
-                cv2.rectangle(
-                    annotated,
-                    (int(x1), int(y1)),
-                    (int(x2), int(y2)),
-                    (0, 255, 0),  # Green color
-                    2  # Slightly thicker line (2 pixels) for visibility
-                )
+                if face_img is not None and face_img.size > 0:
+                    try:
+                        # ONNX format: 112x112, RGB (swapRB=True)
+                        blob = cv2.dnn.blobFromImage(face_img, 1.0, (112, 112), (0, 0, 0), swapRB=True, crop=False)
+                        self.gender_net.setInput(blob)
+                        gender_preds = self.gender_net.forward()
+                        
+                        # gender_preds[0] is [female_score, male_score, age_score]
+                        # 0=Female, 1=Male
+                        gender_idx = gender_preds[0, 0:2].argmax()
+                        gender = self.gender_labels[gender_idx]
+                        
+                        # Optional: Check age to skip babies? No, just count.
+                        
+                        if gender == 'Male':
+                            boys_count += 1
+                            gender_label = "B"
+                            gender_color = (255, 0, 0) # Blue for Boy
+                        else:
+                            girls_count += 1
+                            gender_label = "G"
+                            gender_color = (255, 105, 180) # Pink for Girl
+                            
+                    except Exception as e:
+                        print(f"   ⚠️ Gender detection failed for detection {idx}: {e}")
+            
+            # Save annotated image if requested
+            if save_result:
+                # Draw box
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), gender_color, 2)
                 
                 # Draw number label
                 label = f"{idx}"
-                font_scale = 0.5  # Readable text size
+                if gender_label:
+                    label += f" {gender_label}"
+                
+                font_scale = 0.5
                 thickness = 2
+                (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
                 
-                # Get text size for background
-                (text_width, text_height), baseline = cv2.getTextSize(
-                    label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness
-                )
-                
-                # Draw semi-transparent background for text (above box)
-                # Ensure text doesn't go off-screen at top
-                y_label = int(y1) - 4
+                y_label = y1 - 4
                 if y_label < text_height:
-                    y_label = int(y1) + text_height + 4
+                    y_label = y1 + text_height + 4
                 
-                cv2.rectangle(
-                    annotated,
-                    (int(x1), y_label - text_height - 4),
-                    (int(x1) + text_width + 4, y_label + 4),
-                    (0, 255, 0),  # Green background
-                    -1  # Filled
-                )
-                
-                # Draw text
-                cv2.putText(
-                    annotated,
-                    label,
-                    (int(x1) + 2, y_label),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    font_scale,
-                    (0, 0, 0),  # Black text
-                    thickness
-                )
-            
-            # Save
+                cv2.rectangle(annotated, (x1, y_label - text_height - 4), (x1 + text_width + 4, y_label + 4), gender_color, -1)
+                cv2.putText(annotated, label, (x1 + 2, y_label), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness)
+
+        print(f"   👦 Boys: {boys_count}")
+        print(f"   👧 Girls: {girls_count}\n")
+
+        if save_result:
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
             output_file = output_path / f"{Path(image_path).stem}_counted.jpg"
             cv2.imwrite(str(output_file), annotated)
             print(f"💾 Saved: {output_file}\n")
         
-        return count
+        return {
+            "total": total_count,
+            "boys": boys_count,
+            "girls": girls_count
+        }
 
 
 def main():
@@ -153,10 +251,12 @@ def main():
     counter = CrowdCounter()
     
     # Count people
-    count = counter.count(image_path, save_result=save_result)
+    result = counter.count(image_path, save_result=save_result)
     
     print("="*60)
-    print(f"📊 TOTAL: {count} people")
+    print(f"📊 TOTAL: {result['total']} people")
+    print(f"   👦 Boys: {result['boys']}")
+    print(f"   👧 Girls: {result['girls']}")
     print("="*60)
 
 

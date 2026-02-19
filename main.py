@@ -29,7 +29,7 @@ async def startup_event():
     print("🚀 Initializing Crowd Counter Model...")
     # Use the optimized settings: confidence=0.05
     # Note: imgsz is passed during inference in count()
-    counter = CrowdCounter(confidence=0.05, model_path="weights/yolov8n-head.pt")
+    counter = CrowdCounter(confidence=0.08, model_path="weights/yolov8n-head.pt")
     print("✅ Model loaded and ready!")
 
 @app.get("/")
@@ -68,7 +68,7 @@ async def count_people(file: UploadFile = File(...), background_tasks: Backgroun
         
         # Run counting
         # Note: Using optimized imgsz=3008 as determined by experiments
-        count = counter.count(
+        result = counter.count(
             str(input_path), 
             save_result=True, 
             output_dir=str(RESULTS_DIR),
@@ -102,7 +102,11 @@ async def count_people(file: UploadFile = File(...), background_tasks: Backgroun
             path=output_path, 
             filename=f"counted_{file.filename}.jpg",
             media_type="image/jpeg",
-            headers={"X-People-Count": str(count)}
+            headers={
+                "X-People-Count": str(result['total']),
+                "X-Boys-Count": str(result['boys']),
+                "X-Girls-Count": str(result['girls'])
+            }
         )
         
     except Exception as e:

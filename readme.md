@@ -59,9 +59,13 @@ graph TD
     -   **Model**: `yolov8n-head.pt` (Nano) for speed/accuracy balance.
     -   **Input Size**: **3008px** (Configurable). Large input size is critical for detecting small heads in the distance.
     -   **Confidence Threshold**: **0.05**. Intentionally set low to maximize recall for faint/blurred faces.
-3.  **Output Generation**:
-    -   Draws bounding boxes with sequential numbering.
-    -   Returns total count in HTTP headers.
+    -   **Confidence Threshold**: **0.05**. Intentionally set low to maximize recall for faint/blurred faces.
+4.  **Gender Classification**:
+    -   **Model**: ONNX-based Gender Age Net (High Accuracy).
+    -   **Process**: Crops detected faces, squares them, and classifies as Male or Female.
+5.  **Output Generation**:
+    -   Draws bounding boxes with sequential numbering and gender labels (e.g., "1 B", "2 G").
+    -   Returns total count and gender breakdown in HTTP headers.
 
 ---
 
@@ -77,6 +81,7 @@ Generic object detectors (like standard YOLOv8 trained on COCO) often fail in cr
 | **Inference Size** | 640px | **3008px** |
 | **Recall (Crowds)** | Low (Misses occluded people) | **High (Counts visible heads)** |
 | **False Positives** | Moderate | **Low (Tuned threshold)** |
+| **Gender Detection** | N/A | **Yes (Boys/Girls)** |
 | **Use Case** | General Surveillance | **Dense Event Counting** |
 
 > **Note**: By increasing the inference image size to `3008`, we effectively "zoom in" on the image, allowing the neural network to see features that would otherwise be lost at standard resolutions (640px).
@@ -105,7 +110,9 @@ Generic object detectors (like standard YOLOv8 trained on COCO) often fail in cr
     ```
 
 3.  **Model Weights**
-    Ensure the `yolov8n-head.pt` file is located in the `weights/` directory.
+    Ensure the following files are located in the `weights/` directory:
+    -   `yolov8n-head.pt`
+    -   `genderage.onnx`
 
 ---
 
@@ -121,7 +128,10 @@ Main endpoint to process an image.
 
 #### Response
 -   **Status**: `200 OK`
--   **Headers**: `X-People-Count: <Integer>`
+-   **Headers**: 
+    -   `X-People-Count: <Integer>`
+    -   `X-Boys-Count: <Integer>`
+    -   `X-Girls-Count: <Integer>`
 -   **Body**: Binary image (JPEG) with drawn bounding boxes.
 
 #### Example Response Header
@@ -129,6 +139,8 @@ Main endpoint to process an image.
 HTTP/1.1 200 OK
 content-type: image/jpeg
 x-people-count: 42
+x-boys-count: 20
+x-girls-count: 22
 ...
 ```
 
@@ -151,6 +163,8 @@ files = {'file': open('concert_crowd.jpg', 'rb')}
 response = requests.post(url, files=files)
 
 print(f"Counted: {response.headers['X-People-Count']} people")
+print(f"Boys: {response.headers['X-Boys-Count']}")
+print(f"Girls: {response.headers['X-Girls-Count']}")
 
 # Save the visualized output
 with open('result.jpg', 'wb') as f:
