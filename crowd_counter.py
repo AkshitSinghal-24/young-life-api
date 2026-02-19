@@ -114,7 +114,7 @@ class CrowdCounter:
         
         return square_img
 
-    def count(self, image_path, save_result=False, output_dir="results", imgsz=3008):
+    def count(self, image_path, save_result=False, output_dir="results", imgsz=3008, predict_gender=True):
         """
         Count people in an image with optimized settings for small heads
         
@@ -123,6 +123,7 @@ class CrowdCounter:
             save_result: Save annotated image
             output_dir: Where to save results
             imgsz: Inference image size (higher = better for small heads, slower)
+            predict_gender: Whether to run gender detection (default: True)
             
         Returns:
             dict: { 'total': int, 'boys': int, 'girls': int }
@@ -163,7 +164,7 @@ class CrowdCounter:
             gender_label = ""
             gender_color = (0, 255, 0) # Green default
 
-            if self.gender_net:
+            if self.gender_net and predict_gender:
                 # Use square crop for better recognition
                 face_img = self._get_square_crop(image, (x1, y1, x2, y2))
                 
