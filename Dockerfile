@@ -5,9 +5,11 @@ FROM python:3.10-slim
 WORKDIR /app
 
 # Install system dependencies required for OpenCV and other libraries
+# Install system dependencies required for OpenCV and other libraries AND Nginx
 RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     libglib2.0-0 \
+    nginx \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
@@ -24,8 +26,16 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p temp_uploads results weights
 
-# Expose the port the app runs on
+# Configure Nginx
+RUN rm /etc/nginx/sites-enabled/default
+COPY nginx.conf /etc/nginx/sites-enabled/app
+
+# Make start script executable
+RUN chmod +x start.sh
+
+# Expose ports
+EXPOSE 80
 EXPOSE 8000
 
-# Command to run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Command to run the application using the start script
+CMD ["./start.sh"]

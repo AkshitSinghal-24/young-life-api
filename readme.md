@@ -146,7 +146,53 @@ x-girls-count: 22
 
 ---
 
-## 💻 Usage
+---
+ 
+ ## 🐳 Docker Deployment
+ 
+ This project includes a production-ready Docker setup with Nginx acting as a reverse proxy for the Uvicorn/FastAPI application.
+ 
+ ### Using Docker Compose (Recommended)
+ 
+ The easiest way to run the application is with Docker Compose, which handles the build and configuration automatically.
+ 
+ 1.  **Build and Start**:
+     ```bash
+     docker-compose up --build -d
+     ```
+ 
+ 2.  **Verify**:
+     The API will be available at `http://localhost:80`.
+     You can check the logs with:
+     ```bash
+     docker-compose logs -f
+     ```
+ 
+ 3.  **Stop**:
+     ```bash
+     docker-compose down
+     ```
+ 
+ ### Building Manually
+ 
+ If you prefer to build the image manually:
+ 
+ 1.  **Build the Image**:
+     ```bash
+     docker build -t young-life-api .
+     ```
+ 
+ 2.  **Run the Container**:
+     ```bash
+     docker run -d -p 80:80 \
+       -v $(pwd)/temp_uploads:/app/temp_uploads \
+       -v $(pwd)/results:/app/results \
+       young-life-api
+     ```
+ 
+ ---
+ 
+ ## 💻 Usage
 
 ### Start the Server
 ```bash
