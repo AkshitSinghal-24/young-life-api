@@ -7,7 +7,7 @@ WORKDIR /app
 # Install system dependencies required for OpenCV and other libraries
 # Install system dependencies required for OpenCV and other libraries AND Nginx
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     nginx \
     && rm -rf /var/lib/apt/lists/*
